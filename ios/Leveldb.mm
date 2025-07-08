@@ -142,4 +142,59 @@ RCT_EXPORT_MODULE()
     }
 }
 
+// 关键错误(Key Mistake): 此方法名必须与`NativeLeveldb.ts`中的Spec定义保持一致。
+// 最初命名为`delete`，但这与JavaScript保留关键字冲突，导致JS层无法调用。
+// 因此，Spec和原生实现都统一为`del`。
+- (void)del:(NSString *)dbName key:(NSString *)key resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    // Get full path and convert to std::string
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = [paths objectAtIndex:0];
+    NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:dbName];
+    std::string db_path_str([dbPath UTF8String]);
+
+    // Find the db instance
+    if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
+        reject(@"E_DB_NOT_OPEN", @"Database not open. Call open() first.", nil);
+        return;
+    }
+    leveldb::DB *db = _dbInstances[db_path_str];
+
+    // Convert key to std::string
+    std::string key_str([key UTF8String]);
+
+    // Delete data
+    leveldb::Status status = db->Delete(leveldb::WriteOptions(), key_str);
+
+    if (status.ok()) {
+        resolve(@(true));
+    } else {
+        reject(@"E_LEVELDB_DELETE_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+    }
+}
+
+- (void)close:(NSString *)dbName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    // Get full path and convert to std::string
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = [paths objectAtIndex:0];
+    NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:dbName];
+    std::string db_path_str([dbPath UTF8String]);
+
+    // Find the db instance
+    auto it = _dbInstances.find(db_path_str);
+    if (it == _dbInstances.end()) {
+        // If not found, it might have been already closed. Resolve successfully.
+        resolve(@(true));
+        return;
+    }
+
+    // Close and delete the database instance
+    delete it->second;
+    // Remove from map
+    _dbInstances.erase(it);
+    
+    resolve(@(true));
+}
+
 @end

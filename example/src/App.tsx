@@ -11,7 +11,7 @@ import {
   TextInput,
   SafeAreaView,
 } from 'react-native';
-import { getVersion, open, put, get } from 'react-native-leveldb';
+import { getVersion, open, put, get, del, close } from 'react-native-leveldb';
 import { useState } from 'react';
 
 export default function App() {
@@ -39,6 +39,20 @@ export default function App() {
       setOpenStatus(`Database "${dbName}" opened: ${success}`);
     } catch (e: any) {
       setOpenStatus(`Error opening database: ${e.message}`);
+    }
+  };
+
+  const handleCloseDb = async () => {
+    if (!dbName) {
+      setOpenStatus('Please enter a database name.');
+      return;
+    }
+    try {
+      setOpenStatus('Closing...');
+      const success = await close(dbName);
+      setOpenStatus(`Database "${dbName}" closed: ${success}`);
+    } catch (e: any) {
+      setOpenStatus(`Error closing database: ${e.message}`);
     }
   };
 
@@ -71,6 +85,20 @@ export default function App() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!key) {
+      setStatusMessage('Please enter a key to delete.');
+      return;
+    }
+    try {
+      setStatusMessage(`Deleting "${key}"...`);
+      const success = await del(dbName, key);
+      setStatusMessage(`Delete success: ${success}`);
+    } catch (e: any) {
+      setStatusMessage(`Delete error: ${e.message}`);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.section}>
@@ -85,7 +113,10 @@ export default function App() {
           value={dbName}
           placeholder="e.g., my-leveldb"
         />
-        <Button title="Open DB" onPress={handleOpenDb} />
+        <View style={styles.buttonRow}>
+          <Button title="Open DB" onPress={handleOpenDb} />
+          <Button title="Close DB" onPress={handleCloseDb} />
+        </View>
         {openStatus && <Text style={styles.statusText}>{openStatus}</Text>}
       </View>
       <View style={styles.section}>
@@ -104,6 +135,7 @@ export default function App() {
         <View style={styles.buttonRow}>
           <Button title="Put" onPress={handlePut} />
           <Button title="Get" onPress={handleGet} />
+          <Button title="Delete" onPress={handleDelete} />
         </View>
         <Text>
           Retrieved Value:{' '}

@@ -20,4 +20,12 @@ export function get(dbName: string, key: string): Promise<string | null> {
   return Leveldb.get(dbName, key);
 }
 
+export function del(dbName: string, key: string): Promise<boolean> {
+  return Leveldb.del(dbName, key);
+}
+
+export function close(dbName: string): Promise<boolean> {
+  return Leveldb.close(dbName);
+}
+
 export default Leveldb;
