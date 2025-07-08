@@ -21,9 +21,15 @@ RCT_EXPORT_MODULE()
     _dbInstances.clear();
 }
 
+// Why we need to manually create the directory:
+// LevelDB's `options.create_if_missing = true` only creates the necessary database files
+// (`.sst`, `LOG`, etc.), but it WILL NOT create the parent directory for the database.
+// If the directory (e.g., `.../Documents/my-leveldb`) does not exist, LevelDB will fail
+// when trying to create the `LOCK` file inside it, resulting in a "NotFound: .../LOCK: No such file or directory" error.
+// Therefore, we must ensure the full directory path exists before calling `leveldb::DB::Open`.
 - (void)open:(NSString *)name resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    // 1. Get the Documents directory path
+    // 1. Get the Documents directory path, which is a safe, sandboxed location for app data.
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     NSString *documentsDirectory = [paths objectAtIndex:0];
     NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:name];
@@ -73,6 +79,67 @@ RCT_EXPORT_MODULE()
     (const facebook::react::ObjCTurboModule::InitParams &)params
 {
     return std::make_shared<facebook::react::NativeLeveldbSpecJSI>(params);
+}
+
+- (void)put:(NSString *)dbName key:(NSString *)key value:(NSString *)value resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    // Get full path and convert to std::string
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = [paths objectAtIndex:0];
+    NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:dbName];
+    std::string db_path_str([dbPath UTF8String]);
+
+    // Find the db instance
+    if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
+        reject(@"E_DB_NOT_OPEN", @"Database not open. Call open() first.", nil);
+        return;
+    }
+    leveldb::DB *db = _dbInstances[db_path_str];
+
+    // Convert key/value to std::string
+    std::string key_str([key UTF8String]);
+    std::string value_str([value UTF8String]);
+
+    // Put data
+    leveldb::Status status = db->Put(leveldb::WriteOptions(), key_str, value_str);
+
+    if (status.ok()) {
+        resolve(@(true));
+    } else {
+        reject(@"E_LEVELDB_PUT_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+    }
+}
+
+- (void)get:(NSString *)dbName key:(NSString *)key resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    // Get full path and convert to std::string
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = [paths objectAtIndex:0];
+    NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:dbName];
+    std::string db_path_str([dbPath UTF8String]);
+
+    // Find the db instance
+    if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
+        reject(@"E_DB_NOT_OPEN", @"Database not open. Call open() first.", nil);
+        return;
+    }
+    leveldb::DB *db = _dbInstances[db_path_str];
+
+    // Convert key to std::string
+    std::string key_str([key UTF8String]);
+    std::string value_str;
+
+    // Get data
+    leveldb::Status status = db->Get(leveldb::ReadOptions(), key_str, &value_str);
+
+    if (status.ok()) {
+        resolve([NSString stringWithUTF8String:value_str.c_str()]);
+    } else if (status.IsNotFound()) {
+        resolve(nil); // Resolve with null if key is not found
+    }
+    else {
+        reject(@"E_LEVELDB_GET_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+    }
 }
 
 @end
