@@ -1,12 +1,28 @@
-import { Text, View, StyleSheet } from 'react-native';
-import { multiply } from 'react-native-leveldb';
-
-const result = multiply(3, 7);
+import { Text, View, StyleSheet, Button } from 'react-native';
+import Leveldb, { getVersion } from 'react-native-leveldb';
+import { useState } from 'react';
 
 export default function App() {
+  const [leveldbVersion, setLeveldbVersion] = useState<string | null>(null);
+
+  const handleGetVersion = () => {
+    const version = getVersion();
+    setLeveldbVersion(version);
+  };
+
+  const handleGetVersionFromDefault = () => {
+    const version = Leveldb.getVersion();
+    setLeveldbVersion(`From default export: ${version}`);
+  };
+
   return (
     <View style={styles.container}>
-      <Text>Result: {result}</Text>
+      <Button title="Get LevelDB Version" onPress={handleGetVersion} />
+      <Button
+        title="Get LevelDB Version (from default)"
+        onPress={handleGetVersionFromDefault}
+      />
+      {leveldbVersion && <Text>LevelDB Version: {leveldbVersion}</Text>}
     </View>
   );
 }

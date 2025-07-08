@@ -1,5 +1,7 @@
 import Leveldb from './NativeLeveldb';
 
-export function multiply(a: number, b: number): number {
-  return Leveldb.multiply(a, b);
+export function getVersion(): string {
+  return Leveldb.getVersion();
 }
+
+export default Leveldb;

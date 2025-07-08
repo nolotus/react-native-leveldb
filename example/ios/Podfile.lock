@@ -12,6 +12,7 @@ PODS:
     - DoubleConversion
     - glog
     - hermes-engine
+    - leveldb-library
     - RCT-Folly (= 2024.11.18.00)
     - RCTRequired
     - RCTTypeSafety
@@ -32,6 +33,7 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - Yoga
+  - leveldb-library (1.22.6)
   - RCT-Folly (2024.11.18.00):
     - boost
     - DoubleConversion
@@ -1758,6 +1760,7 @@ DEPENDENCIES:
 
 SPEC REPOS:
   trunk:
+    - leveldb-library
     - SocketRocket
 
 EXTERNAL SOURCES:
@@ -1913,7 +1916,8 @@ SPEC CHECKSUMS:
   fmt: a40bb5bd0294ea969aaaba240a927bd33d878cdd
   glog: 5683914934d5b6e4240e497e0f4a3b42d1854183
   hermes-engine: 314be5250afa5692b57b4dd1705959e1973a8ebe
-  Leveldb: 5699b01e7536a89297deacf164f141f3f4ff21c2
+  Leveldb: b253549af1f2f38930141cd904e44dc6cb299b22
+  leveldb-library: cc8b8f8e013647a295ad3f8cd2ddf49a6f19be19
   RCT-Folly: 36fe2295e44b10d831836cc0d1daec5f8abcf809
   RCTDeprecation: 83ffb90c23ee5cea353bd32008a7bca100908f8c
   RCTRequired: eb7c0aba998009f47a540bec9e9d69a54f68136e
