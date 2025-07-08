@@ -3,6 +3,7 @@ import { TurboModuleRegistry } from 'react-native';
 
 export interface Spec extends TurboModule {
   getVersion(): string;
+  open(name: string): Promise<boolean>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Leveldb');
