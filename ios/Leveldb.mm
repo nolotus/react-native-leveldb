@@ -10,15 +10,23 @@
 
 @implementation Leveldb {
     std::map<std::string, leveldb::DB*> _dbInstances;
+    std::map<std::string, leveldb::Iterator*> _iteratorInstances;
 }
 RCT_EXPORT_MODULE()
 
 - (void)dealloc
 {
+    // Clean up all DB instances
     for (auto const& [key, val] : _dbInstances) {
         delete val;
     }
     _dbInstances.clear();
+
+    // Clean up all iterator instances
+    for (auto const& [key, val] : _iteratorInstances) {
+        delete val;
+    }
+    _iteratorInstances.clear();
 }
 
 // Why we need to manually create the directory:
@@ -194,6 +202,85 @@ RCT_EXPORT_MODULE()
     // Remove from map
     _dbInstances.erase(it);
     
+    resolve(@(true));
+}
+
+- (void)iterator:(NSString *)dbName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    // Get full path and convert to std::string
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = [paths objectAtIndex:0];
+    NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:dbName];
+    std::string db_path_str([dbPath UTF8String]);
+
+    // Find the db instance
+    if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
+        reject(@"E_DB_NOT_OPEN", @"Database not open. Call open() first.", nil);
+        return;
+    }
+    leveldb::DB *db = _dbInstances[db_path_str];
+
+    // Create iterator
+    leveldb::ReadOptions options;
+    leveldb::Iterator* it = db->NewIterator(options);
+    it->SeekToFirst(); // IMPORTANT: Always seek to the first element upon creation.
+
+    // Generate a unique ID for the iterator
+    NSString *iteratorId = [[NSUUID UUID] UUIDString];
+    std::string iterator_id_str([iteratorId UTF8String]);
+
+    // Store the iterator instance
+    _iteratorInstances[iterator_id_str] = it;
+
+    // Return the iteratorId to JS
+    resolve(iteratorId);
+}
+
+- (void)iteratorNext:(NSString *)iteratorId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    std::string iterator_id_str([iteratorId UTF8String]);
+
+    // Find the iterator instance
+    if (_iteratorInstances.find(iterator_id_str) == _iteratorInstances.end()) {
+        reject(@"E_ITERATOR_NOT_FOUND", @"Iterator not found or already closed.", nil);
+        return;
+    }
+    leveldb::Iterator* it = _iteratorInstances[iterator_id_str];
+
+    if (it->Valid()) {
+        // Get key and value
+        std::string key = it->key().ToString();
+        std::string value = it->value().ToString();
+        
+        // Prepare result array
+        NSArray *result = @[[NSString stringWithUTF8String:key.c_str()], [NSString stringWithUTF8String:value.c_str()]];
+        
+        // Move to next for the subsequent call
+        it->Next();
+        
+        resolve(result);
+    } else {
+        // End of iteration, resolve with null
+        resolve(nil);
+    }
+}
+
+- (void)iteratorClose:(NSString *)iteratorId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    std::string iterator_id_str([iteratorId UTF8String]);
+
+    // Find the iterator instance
+    auto it_map = _iteratorInstances.find(iterator_id_str);
+    if (it_map == _iteratorInstances.end()) {
+        // Already closed, resolve successfully
+        resolve(@(true));
+        return;
+    }
+
+    // Delete the iterator and remove from map
+    delete it_map->second;
+    _iteratorInstances.erase(it_map);
+
     resolve(@(true));
 }
 

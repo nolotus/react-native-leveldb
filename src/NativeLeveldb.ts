@@ -12,6 +12,11 @@ export interface Spec extends TurboModule {
   // 必须使用一个非保留字的名称，如此处的`del`。
   del(dbName: string, key: string): Promise<boolean>;
   close(dbName: string): Promise<boolean>;
+
+  // Iterator methods
+  iterator(dbName: string): Promise<string>;
+  iteratorNext(iteratorId: string): Promise<[string, string] | null>;
+  iteratorClose(iteratorId: string): Promise<boolean>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Leveldb');

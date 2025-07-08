@@ -28,4 +28,18 @@ export function close(dbName: string): Promise<boolean> {
   return Leveldb.close(dbName);
 }
 
+export function iterator(dbName: string): Promise<string> {
+  return Leveldb.iterator(dbName);
+}
+
+export function iteratorNext(
+  iteratorId: string
+): Promise<[string, string] | null> {
+  return Leveldb.iteratorNext(iteratorId);
+}
+
+export function iteratorClose(iteratorId: string): Promise<boolean> {
+  return Leveldb.iteratorClose(iteratorId);
+}
+
 export default Leveldb;
