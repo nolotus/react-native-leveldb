@@ -12,23 +12,14 @@ import {
   SafeAreaView,
   ScrollView,
 } from 'react-native';
-import {
-  getVersion,
-  open,
-  put,
-  get,
-  del,
-  close,
-  iterator,
-  iteratorNext,
-  iteratorClose,
-} from 'react-native-leveldb';
+import { getVersion, createDB } from 'react-native-leveldb';
 import { useState } from 'react';
 
 export default function App() {
   const [leveldbVersion, setLeveldbVersion] = useState<string | null>(null);
   const [dbName, setDbName] = useState('my-leveldb');
   const [openStatus, setOpenStatus] = useState<string | null>(null);
+  const [dbInstance, setDbInstance] = useState<any>(null);
   const [key, setKey] = useState('');
   const [value, setValue] = useState('');
   const [retrievedValue, setRetrievedValue] = useState<string | null>('');
@@ -48,7 +39,9 @@ export default function App() {
     }
     try {
       setOpenStatus('Opening...');
-      const success = await open(dbName);
+      const db = createDB(dbName);
+      const success = await db.open();
+      setDbInstance(db);
       setOpenStatus(`Database "${dbName}" opened: ${success}`);
     } catch (e: any) {
       setOpenStatus(`Error opening database: ${e.message}`);
@@ -65,7 +58,8 @@ export default function App() {
     }
     try {
       setOpenStatus('Closing...');
-      const success = await close(dbName);
+      const success = await dbInstance.close();
+      setDbInstance(null);
       setOpenStatus(`Database "${dbName}" closed: ${success}`);
     } catch (e: any) {
       setOpenStatus(`Error closing database: ${e.message}`);
@@ -79,7 +73,7 @@ export default function App() {
     }
     try {
       setStatusMessage(`Putting "${key}"...`);
-      const success = await put(dbName, key, value);
+      const success = await dbInstance.put(key, value);
       setStatusMessage(`Put success: ${success}`);
     } catch (e: any) {
       setStatusMessage(`Put error: ${e.message}`);
@@ -93,7 +87,7 @@ export default function App() {
     }
     try {
       setStatusMessage(`Getting "${key}"...`);
-      const result = await get(dbName, key);
+      const result = await dbInstance.get(key);
       setRetrievedValue(result);
       setStatusMessage(`Get successful.`);
     } catch (e: any) {
@@ -108,7 +102,7 @@ export default function App() {
     }
     try {
       setStatusMessage(`Deleting "${key}"...`);
-      const success = await del(dbName, key);
+      const success = await dbInstance.del(key);
       setStatusMessage(`Delete success: ${success}`);
     } catch (e: any) {
       setStatusMessage(`Delete error: ${e.message}`);
@@ -122,7 +116,7 @@ export default function App() {
     }
     try {
       setStatusMessage('Creating iterator...');
-      const id = await iterator(dbName);
+      const id = await dbInstance.iterator();
       setIteratorId(id);
       setStatusMessage(`Iterator created with ID: ${id}`);
       setIteratedData([]);
@@ -137,7 +131,7 @@ export default function App() {
       return;
     }
     try {
-      const result = await iteratorNext(iteratorId);
+      const result = await dbInstance.iteratorNext(iteratorId);
       if (result) {
         setIteratedData((prev) => [...prev, result]);
       } else {
@@ -155,7 +149,7 @@ export default function App() {
       return;
     }
     try {
-      await iteratorClose(iteratorId);
+      await dbInstance.iteratorClose(iteratorId);
       setStatusMessage(`Iterator ${iteratorId} closed.`);
       setIteratorId(null);
     } catch (e: any) {
