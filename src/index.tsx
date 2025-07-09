@@ -186,7 +186,8 @@ export class Level {
       this.dbName,
       encode(key, keyEncoding)
     );
-    return result === null ? null : decode(result, valueEncoding);
+    // abstract-level: not found 返回 undefined
+    return result === null ? undefined : decode(result, valueEncoding);
   }
 
   async del(key: Key, options?: DelOptions): Promise<void> {
@@ -198,7 +199,7 @@ export class Level {
   async getMany(
     keys: Key[],
     options?: GetOptions
-  ): Promise<Array<Value | null>> {
+  ): Promise<Array<Value | undefined>> {
     // This is a non-optimized implementation. A native `getMany` would be better.
     return Promise.all(keys.map((key) => this.get(key, options)));
   }

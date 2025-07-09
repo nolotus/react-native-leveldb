@@ -1,5 +1,5 @@
 {
-  "name": "react-native-leveldb",
+  "name": "@nolotus/react-native-leveldb",
   "version": "0.1.0",
   "description": "hi",
   "main": "./lib/module/index.js",
@@ -56,6 +56,7 @@
   },
   "homepage": "https://github.com/nolotus/react-native-leveldb#readme",
   "publishConfig": {
+    "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
