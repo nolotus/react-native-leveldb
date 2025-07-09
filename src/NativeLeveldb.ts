@@ -1,22 +1,54 @@
 import type { TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
 
+export interface IteratorOptions {
+  gt?: string;
+  gte?: string;
+  lt?: string;
+  lte?: string;
+  reverse?: boolean;
+  limit?: number;
+}
+
 export interface Spec extends TurboModule {
+  // --- General Methods ---
   getVersion(): string;
   open(name: string): Promise<boolean>;
-  put(dbName: string, key: string, value: string): Promise<boolean>;
-  get(dbName: string, key: string): Promise<string | null>;
-  // 关键错误(Key Mistake): 此处不能使用`delete`作为方法名，因为`delete`是JavaScript的保留关键字。
-  // 在Turbo Module的机制下，使用保留关键字作为接口方法名，会导致代码生成(Codegen)失败或产生不可预知的行为，
-  // 最终使JS层调用时出现 `_NativeLeveldb.default.delete is not a function` 的错误。
-  // 必须使用一个非保留字的名称，如此处的`del`。
-  del(dbName: string, key: string): Promise<boolean>;
   close(dbName: string): Promise<boolean>;
 
-  // Iterator methods
-  iterator(dbName: string): Promise<string>;
-  iteratorNext(iteratorId: string): Promise<[string, string] | null>;
-  iteratorClose(iteratorId: string): Promise<boolean>;
+  // --- Data Methods ---
+  put(dbName: string, key: string, value: string): Promise<boolean>;
+  get(dbName: string, key: string): Promise<string | null>;
+  del(dbName: string, key: string): Promise<boolean>;
+  batch(
+    dbName: string,
+    operations: Array<
+      { type: 'put'; key: string; value: string } | { type: 'del'; key: string }
+    >
+  ): Promise<boolean>;
+
+  // --- Iterator Methods (New Granular API) ---
+  /**
+   * Creates a new iterator on the native side and returns its unique ID.
+   * @param optionsJSON A JSON string of the IteratorOptions.
+   */
+  iterator_create(dbName: string, optionsJSON: string): Promise<string>;
+
+  /**
+   * Fetches the next `count` entries from the iterator specified by `iteratorId`.
+   * Returns a JSON string of an array of [key, value] pairs.
+   */
+  iterator_next(iteratorId: string, count: number): Promise<string | null>;
+
+  /**
+   * Seeks the iterator to the given key.
+   */
+  iterator_seek(iteratorId: string, key: string): void;
+
+  /**
+   * Closes and releases the native iterator.
+   */
+  iterator_close(iteratorId: string): Promise<boolean>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Leveldb');

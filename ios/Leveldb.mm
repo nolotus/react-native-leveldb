@@ -8,6 +8,14 @@
 #import <map>
 #import <string>
 
+// Helper to safely convert id to std::string
+static std::string to_std_string(id obj) {
+    if (obj == nil || obj == [NSNull null] || ![obj isKindOfClass:[NSString class]]) {
+        return "";
+    }
+    return std::string([(NSString *)obj UTF8String]);
+}
+
 @implementation Leveldb {
     std::map<std::string, leveldb::DB*> _dbInstances;
     std::map<std::string, leveldb::Iterator*> _iteratorInstances;
@@ -16,66 +24,71 @@ RCT_EXPORT_MODULE()
 
 - (void)dealloc
 {
-    // Clean up all DB instances
     for (auto const& [key, val] : _dbInstances) {
         delete val;
     }
     _dbInstances.clear();
-
-    // Clean up all iterator instances
     for (auto const& [key, val] : _iteratorInstances) {
         delete val;
     }
     _iteratorInstances.clear();
 }
 
-// Why we need to manually create the directory:
-// LevelDB's `options.create_if_missing = true` only creates the necessary database files
-// (`.sst`, `LOG`, etc.), but it WILL NOT create the parent directory for the database.
-// If the directory (e.g., `.../Documents/my-leveldb`) does not exist, LevelDB will fail
-// when trying to create the `LOCK` file inside it, resulting in a "NotFound: .../LOCK: No such file or directory" error.
-// Therefore, we must ensure the full directory path exists before calling `leveldb::DB::Open`.
-- (void)open:(NSString *)name resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+- (NSString *)getDbFullPath:(NSString *)dbName
 {
-    // 1. Get the Documents directory path, which is a safe, sandboxed location for app data.
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     NSString *documentsDirectory = [paths objectAtIndex:0];
-    NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:name];
+    return [documentsDirectory stringByAppendingPathComponent:dbName];
+}
 
-    // 2. Ensure the directory exists
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    if (![fileManager fileExistsAtPath:dbPath]) {
-        NSError *error = nil;
-        BOOL success = [fileManager createDirectoryAtPath:dbPath withIntermediateDirectories:YES attributes:nil error:&error];
-        if (!success) {
-            NSString *errorMessage = [NSString stringWithFormat:@"Failed to create database directory: %@", [error localizedDescription]];
-            reject(@"E_LEVELDB_CREATE_DIR_FAILED", errorMessage, error);
+- (void)open:(NSString *)name resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    @try {
+        NSString *dbPath = [self getDbFullPath:name];
+        std::string db_path_str([dbPath UTF8String]);
+
+        if (_dbInstances.count(db_path_str)) {
+            resolve(@(true));
             return;
         }
+
+        NSFileManager *fileManager = [NSFileManager defaultManager];
+        if (![fileManager fileExistsAtPath:dbPath]) {
+            NSError *error = nil;
+            if (![fileManager createDirectoryAtPath:dbPath withIntermediateDirectories:YES attributes:nil error:&error]) {
+                reject(@"E_LEVELDB_CREATE_DIR_FAILED", [NSString stringWithFormat:@"Failed to create database directory: %@", [error localizedDescription]], error);
+                return;
+            }
+        }
+
+        leveldb::DB* db;
+        leveldb::Options options;
+        options.create_if_missing = true;
+        leveldb::Status status = leveldb::DB::Open(options, db_path_str, &db);
+
+        if (status.ok()) {
+            _dbInstances[db_path_str] = db;
+            resolve(@(true));
+        } else {
+            reject(@"E_LEVELDB_OPEN_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+        }
+    } @catch (NSException *exception) {
+        reject(exception.name, exception.reason, nil);
     }
+}
 
-    leveldb::DB* db;
-    leveldb::Options options;
-    options.create_if_missing = true;
-
-    // 3. Convert full path to std::string
-    const char* db_path_c = [dbPath UTF8String];
-    std::string db_path_str(db_path_c);
-    
-    // Check if db is already open for this path
-    if (_dbInstances.count(db_path_str)) {
-        resolve(@(true)); // Already open, resolve successfully
-        return;
-    }
-
-    // 4. Open the database
-    leveldb::Status status = leveldb::DB::Open(options, db_path_str, &db);
-
-    if (status.ok()) {
-        _dbInstances[db_path_str] = db;
+- (void)close:(NSString *)dbName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    @try {
+        std::string db_path_str([[self getDbFullPath:dbName] UTF8String]);
+        auto it = _dbInstances.find(db_path_str);
+        if (it != _dbInstances.end()) {
+            delete it->second;
+            _dbInstances.erase(it);
+        }
         resolve(@(true));
-    } else {
-        reject(@"E_LEVELDB_OPEN_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+    } @catch (NSException *exception) {
+        reject(exception.name, exception.reason, nil);
     }
 }
 
@@ -91,197 +104,199 @@ RCT_EXPORT_MODULE()
 
 - (void)put:(NSString *)dbName key:(NSString *)key value:(NSString *)value resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    // Get full path and convert to std::string
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths objectAtIndex:0];
-    NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:dbName];
-    std::string db_path_str([dbPath UTF8String]);
-
-    // Find the db instance
-    if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
-        reject(@"E_DB_NOT_OPEN", @"Database not open. Call open() first.", nil);
-        return;
-    }
-    leveldb::DB *db = _dbInstances[db_path_str];
-
-    // Convert key/value to std::string
-    std::string key_str([key UTF8String]);
-    std::string value_str([value UTF8String]);
-
-    // Put data
-    leveldb::Status status = db->Put(leveldb::WriteOptions(), key_str, value_str);
-
-    if (status.ok()) {
-        resolve(@(true));
-    } else {
-        reject(@"E_LEVELDB_PUT_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+    @try {
+        std::string db_path_str([[self getDbFullPath:dbName] UTF8String]);
+        if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
+            reject(@"E_DB_NOT_OPEN", @"Database not open", nil);
+            return;
+        }
+        leveldb::WriteOptions writeOptions;
+        writeOptions.sync = true;
+        leveldb::Status status = _dbInstances[db_path_str]->Put(writeOptions, to_std_string(key), to_std_string(value));
+        if (status.ok()) resolve(@(true));
+        else reject(@"E_LEVELDB_PUT_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+    } @catch (NSException *exception) {
+        reject(exception.name, exception.reason, nil);
     }
 }
 
 - (void)get:(NSString *)dbName key:(NSString *)key resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    // Get full path and convert to std::string
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths objectAtIndex:0];
-    NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:dbName];
-    std::string db_path_str([dbPath UTF8String]);
-
-    // Find the db instance
-    if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
-        reject(@"E_DB_NOT_OPEN", @"Database not open. Call open() first.", nil);
-        return;
-    }
-    leveldb::DB *db = _dbInstances[db_path_str];
-
-    // Convert key to std::string
-    std::string key_str([key UTF8String]);
-    std::string value_str;
-
-    // Get data
-    leveldb::Status status = db->Get(leveldb::ReadOptions(), key_str, &value_str);
-
-    if (status.ok()) {
-        resolve([NSString stringWithUTF8String:value_str.c_str()]);
-    } else if (status.IsNotFound()) {
-        resolve(nil); // Resolve with null if key is not found
-    }
-    else {
-        reject(@"E_LEVELDB_GET_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+    @try {
+        std::string db_path_str([[self getDbFullPath:dbName] UTF8String]);
+        if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
+            reject(@"E_DB_NOT_OPEN", @"Database not open", nil);
+            return;
+        }
+        std::string value_str;
+        leveldb::Status status = _dbInstances[db_path_str]->Get(leveldb::ReadOptions(), to_std_string(key), &value_str);
+        if (status.ok()) resolve([NSString stringWithUTF8String:value_str.c_str()]);
+        else if (status.IsNotFound()) resolve(nil);
+        else reject(@"E_LEVELDB_GET_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+    } @catch (NSException *exception) {
+        reject(exception.name, exception.reason, nil);
     }
 }
 
-// 关键错误(Key Mistake): 此方法名必须与`NativeLeveldb.ts`中的Spec定义保持一致。
-// 最初命名为`delete`，但这与JavaScript保留关键字冲突，导致JS层无法调用。
-// 因此，Spec和原生实现都统一为`del`。
 - (void)del:(NSString *)dbName key:(NSString *)key resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    // Get full path and convert to std::string
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths objectAtIndex:0];
-    NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:dbName];
-    std::string db_path_str([dbPath UTF8String]);
-
-    // Find the db instance
-    if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
-        reject(@"E_DB_NOT_OPEN", @"Database not open. Call open() first.", nil);
-        return;
+    @try {
+        std::string db_path_str([[self getDbFullPath:dbName] UTF8String]);
+        if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
+            reject(@"E_DB_NOT_OPEN", @"Database not open", nil);
+            return;
+        }
+        leveldb::WriteOptions writeOptions;
+        writeOptions.sync = true;
+        leveldb::Status status = _dbInstances[db_path_str]->Delete(writeOptions, to_std_string(key));
+        if (status.ok()) resolve(@(true));
+        else reject(@"E_LEVELDB_DELETE_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+    } @catch (NSException *exception) {
+        reject(exception.name, exception.reason, nil);
     }
-    leveldb::DB *db = _dbInstances[db_path_str];
+}
 
-    // Convert key to std::string
-    std::string key_str([key UTF8String]);
+- (void)batch:(NSString *)dbName operations:(NSArray *)operations resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    @try {
+        std::string db_path_str([[self getDbFullPath:dbName] UTF8String]);
+        if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
+            reject(@"E_DB_NOT_OPEN", @"Database not open", nil);
+            return;
+        }
+        leveldb::WriteBatch batch;
+        for (id op_id in operations) {
+            if (![op_id isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *op = (NSDictionary *)op_id;
+            NSString *type = op[@"type"];
+            std::string key_str = to_std_string(op[@"key"]);
+            if ([type isEqualToString:@"put"]) {
+                batch.Put(key_str, to_std_string(op[@"value"]));
+            } else if ([type isEqualToString:@"del"]) {
+                batch.Delete(key_str);
+            }
+        }
+        leveldb::WriteOptions writeOptions;
+        writeOptions.sync = true;
+        leveldb::Status status = _dbInstances[db_path_str]->Write(writeOptions, &batch);
+        if (status.ok()) resolve(@(true));
+        else reject(@"E_LEVELDB_BATCH_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+    } @catch (NSException *exception) {
+        reject(exception.name, exception.reason, nil);
+    }
+}
 
-    // Delete data
-    leveldb::Status status = db->Delete(leveldb::WriteOptions(), key_str);
+- (void)iterator_create:(NSString *)dbName optionsJSON:(NSString *)optionsJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    @try {
+        std::string db_path_str([[self getDbFullPath:dbName] UTF8String]);
+        if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
+            reject(@"E_DB_NOT_OPEN", @"Database not open", nil);
+            return;
+        }
 
-    if (status.ok()) {
+        NSError *error = nil;
+        NSData *data = [optionsJSON dataUsingEncoding:NSUTF8StringEncoding];
+        NSDictionary *options = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+
+        if (error) {
+            reject(@"E_JSON_PARSE", @"Failed to parse options JSON", error);
+            return;
+        }
+
+        leveldb::DB *db = _dbInstances[db_path_str];
+        leveldb::Iterator* it = db->NewIterator(leveldb::ReadOptions());
+
+        bool reverse = NO;
+        if (options[@"reverse"] && options[@"reverse"] != [NSNull null]) {
+            reverse = [options[@"reverse"] boolValue];
+        }
+
+        if (reverse) {
+            it->SeekToLast();
+            id lt_obj = options[@"lt"];
+            if (lt_obj && [lt_obj isKindOfClass:[NSString class]]) {
+                it->Seek(to_std_string(lt_obj));
+                if (it->Valid() && it->key().ToString() >= to_std_string(lt_obj)) it->Prev();
+            }
+        } else {
+            it->SeekToFirst();
+            id gte_obj = options[@"gte"];
+            if (gte_obj && [gte_obj isKindOfClass:[NSString class]]) {
+                it->Seek(to_std_string(gte_obj));
+            }
+            id gt_obj = options[@"gt"];
+            if (gt_obj && [gt_obj isKindOfClass:[NSString class]]) {
+                it->Seek(to_std_string(gt_obj));
+                if (it->Valid() && it->key().ToString() == to_std_string(gt_obj)) it->Next();
+            }
+        }
+
+        NSString *iteratorId = [[NSUUID UUID] UUIDString];
+        _iteratorInstances[[iteratorId UTF8String]] = it;
+        resolve(iteratorId);
+    } @catch (NSException *exception) {
+        reject(exception.name, exception.reason, nil);
+    }
+}
+
+- (void)iterator_next:(NSString *)iteratorId count:(double)count resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    @try {
+        std::string iterator_id_str = to_std_string(iteratorId);
+        if (_iteratorInstances.find(iterator_id_str) == _iteratorInstances.end()) {
+            reject(@"E_ITERATOR_NOT_FOUND", @"Iterator not found", nil);
+            return;
+        }
+        leveldb::Iterator* it = _iteratorInstances[iterator_id_str];
+        NSMutableArray *result = [NSMutableArray array];
+        int num = (int)count;
+
+        for (int i = 0; i < num && it->Valid(); i++, it->Next()) {
+            NSArray *entry = @[
+                [NSString stringWithUTF8String:it->key().ToString().c_str()],
+                [NSString stringWithUTF8String:it->value().ToString().c_str()]
+            ];
+            [result addObject:entry];
+        }
+
+        if ([result count] > 0) {
+            NSData *jsonData = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+            NSString *jsonString = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
+            resolve(jsonString);
+        } else {
+            resolve(nil);
+        }
+    } @catch (NSException *exception) {
+        reject(exception.name, exception.reason, nil);
+    }
+}
+
+- (void)iterator_seek:(NSString *)iteratorId key:(NSString *)key
+{
+    @try {
+        std::string iterator_id_str = to_std_string(iteratorId);
+        if (_iteratorInstances.find(iterator_id_str) != _iteratorInstances.end()) {
+            _iteratorInstances[iterator_id_str]->Seek(to_std_string(key));
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"[LevelDB] iterator_seek failed: %@", exception.reason);
+    }
+}
+
+- (void)iterator_close:(NSString *)iteratorId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    @try {
+        std::string iterator_id_str = to_std_string(iteratorId);
+        auto it = _iteratorInstances.find(iterator_id_str);
+        if (it != _iteratorInstances.end()) {
+            delete it->second;
+            _iteratorInstances.erase(it);
+        }
         resolve(@(true));
-    } else {
-        reject(@"E_LEVELDB_DELETE_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+    } @catch (NSException *exception) {
+        reject(exception.name, exception.reason, nil);
     }
-}
-
-- (void)close:(NSString *)dbName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
-{
-    // Get full path and convert to std::string
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths objectAtIndex:0];
-    NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:dbName];
-    std::string db_path_str([dbPath UTF8String]);
-
-    // Find the db instance
-    auto it = _dbInstances.find(db_path_str);
-    if (it == _dbInstances.end()) {
-        // If not found, it might have been already closed. Resolve successfully.
-        resolve(@(true));
-        return;
-    }
-
-    // Close and delete the database instance
-    delete it->second;
-    // Remove from map
-    _dbInstances.erase(it);
-    
-    resolve(@(true));
-}
-
-- (void)iterator:(NSString *)dbName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
-{
-    // Get full path and convert to std::string
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths objectAtIndex:0];
-    NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:dbName];
-    std::string db_path_str([dbPath UTF8String]);
-
-    // Find the db instance
-    if (_dbInstances.find(db_path_str) == _dbInstances.end()) {
-        reject(@"E_DB_NOT_OPEN", @"Database not open. Call open() first.", nil);
-        return;
-    }
-    leveldb::DB *db = _dbInstances[db_path_str];
-
-    // Create iterator
-    leveldb::ReadOptions options;
-    leveldb::Iterator* it = db->NewIterator(options);
-    it->SeekToFirst(); // IMPORTANT: Always seek to the first element upon creation.
-
-    // Generate a unique ID for the iterator
-    NSString *iteratorId = [[NSUUID UUID] UUIDString];
-    std::string iterator_id_str([iteratorId UTF8String]);
-
-    // Store the iterator instance
-    _iteratorInstances[iterator_id_str] = it;
-
-    // Return the iteratorId to JS
-    resolve(iteratorId);
-}
-
-- (void)iteratorNext:(NSString *)iteratorId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
-{
-    std::string iterator_id_str([iteratorId UTF8String]);
-
-    // Find the iterator instance
-    if (_iteratorInstances.find(iterator_id_str) == _iteratorInstances.end()) {
-        reject(@"E_ITERATOR_NOT_FOUND", @"Iterator not found or already closed.", nil);
-        return;
-    }
-    leveldb::Iterator* it = _iteratorInstances[iterator_id_str];
-
-    if (it->Valid()) {
-        // Get key and value
-        std::string key = it->key().ToString();
-        std::string value = it->value().ToString();
-        
-        // Prepare result array
-        NSArray *result = @[[NSString stringWithUTF8String:key.c_str()], [NSString stringWithUTF8String:value.c_str()]];
-        
-        // Move to next for the subsequent call
-        it->Next();
-        
-        resolve(result);
-    } else {
-        // End of iteration, resolve with null
-        resolve(nil);
-    }
-}
-
-- (void)iteratorClose:(NSString *)iteratorId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
-{
-    std::string iterator_id_str([iteratorId UTF8String]);
-
-    // Find the iterator instance
-    auto it_map = _iteratorInstances.find(iterator_id_str);
-    if (it_map == _iteratorInstances.end()) {
-        // Already closed, resolve successfully
-        resolve(@(true));
-        return;
-    }
-
-    // Delete the iterator and remove from map
-    delete it_map->second;
-    _iteratorInstances.erase(it_map);
-
-    resolve(@(true));
 }
 
 @end
