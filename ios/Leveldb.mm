@@ -16,9 +16,22 @@ static std::string to_std_string(id obj) {
     return std::string([(NSString *)obj UTF8String]);
 }
 
+struct IteratorWrapper {
+    leveldb::Iterator* iterator;
+    __strong NSDictionary* options;
+
+    IteratorWrapper(leveldb::Iterator* it, NSDictionary* opts)
+        : iterator(it), options(opts) {}
+
+    ~IteratorWrapper() {
+        delete iterator;
+        // ARC will handle the release of options
+    }
+};
+
 @implementation Leveldb {
     std::map<std::string, leveldb::DB*> _dbInstances;
-    std::map<std::string, leveldb::Iterator*> _iteratorInstances;
+    std::map<std::string, IteratorWrapper*> _iteratorInstances;
 }
 RCT_EXPORT_MODULE()
 
@@ -149,8 +162,11 @@ RCT_EXPORT_MODULE()
         leveldb::WriteOptions writeOptions;
         writeOptions.sync = true;
         leveldb::Status status = _dbInstances[db_path_str]->Delete(writeOptions, to_std_string(key));
-        if (status.ok()) resolve(@(true));
-        else reject(@"E_LEVELDB_DELETE_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+        if (status.ok()) {
+            resolve(@(true));
+        } else {
+            reject(@"E_LEVELDB_DELETE_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+        }
     } @catch (NSException *exception) {
         reject(exception.name, exception.reason, nil);
     }
@@ -179,8 +195,11 @@ RCT_EXPORT_MODULE()
         leveldb::WriteOptions writeOptions;
         writeOptions.sync = true;
         leveldb::Status status = _dbInstances[db_path_str]->Write(writeOptions, &batch);
-        if (status.ok()) resolve(@(true));
-        else reject(@"E_LEVELDB_BATCH_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+        if (status.ok()) {
+            resolve(@(true));
+        } else {
+            reject(@"E_LEVELDB_BATCH_FAILED", [NSString stringWithUTF8String:status.ToString().c_str()], nil);
+        }
     } @catch (NSException *exception) {
         reject(exception.name, exception.reason, nil);
     }
@@ -233,7 +252,7 @@ RCT_EXPORT_MODULE()
         }
 
         NSString *iteratorId = [[NSUUID UUID] UUIDString];
-        _iteratorInstances[[iteratorId UTF8String]] = it;
+        _iteratorInstances[[iteratorId UTF8String]] = new IteratorWrapper(it, options);
         resolve(iteratorId);
     } @catch (NSException *exception) {
         reject(exception.name, exception.reason, nil);
@@ -248,16 +267,48 @@ RCT_EXPORT_MODULE()
             reject(@"E_ITERATOR_NOT_FOUND", @"Iterator not found", nil);
             return;
         }
-        leveldb::Iterator* it = _iteratorInstances[iterator_id_str];
+        IteratorWrapper* wrapper = _iteratorInstances[iterator_id_str];
+        leveldb::Iterator* it = wrapper->iterator;
+        NSDictionary* opts = wrapper->options;
+
         NSMutableArray *result = [NSMutableArray array];
         int num = (int)count;
 
-        for (int i = 0; i < num && it->Valid(); i++, it->Next()) {
+        id lt_obj = opts[@"lt"];
+        id lte_obj = opts[@"lte"];
+        bool reverse = [opts[@"reverse"] boolValue];
+
+        for (int i = 0; i < num && it->Valid(); ) {
+            std::string currentKey = it->key().ToString();
+
+            if (reverse) {
+                // Reverse mode checks: gt, gte
+                id gt_obj = opts[@"gt"];
+                if (gt_obj && gt_obj != [NSNull null] && currentKey <= to_std_string(gt_obj)) {
+                    break;
+                }
+                id gte_obj = opts[@"gte"];
+                if (gte_obj && gte_obj != [NSNull null] && currentKey < to_std_string(gte_obj)) {
+                    break;
+                }
+            } else {
+                // Forward mode checks: lt, lte
+                if (lt_obj && lt_obj != [NSNull null] && currentKey >= to_std_string(lt_obj)) {
+                    break;
+                }
+                if (lte_obj && lte_obj != [NSNull null] && currentKey > to_std_string(lte_obj)) {
+                    break;
+                }
+            }
+
             NSArray *entry = @[
-                [NSString stringWithUTF8String:it->key().ToString().c_str()],
+                [NSString stringWithUTF8String:currentKey.c_str()],
                 [NSString stringWithUTF8String:it->value().ToString().c_str()]
             ];
             [result addObject:entry];
+            i++;
+
+            if (reverse) it->Prev(); else it->Next();
         }
 
         if ([result count] > 0) {
@@ -277,7 +328,7 @@ RCT_EXPORT_MODULE()
     @try {
         std::string iterator_id_str = to_std_string(iteratorId);
         if (_iteratorInstances.find(iterator_id_str) != _iteratorInstances.end()) {
-            _iteratorInstances[iterator_id_str]->Seek(to_std_string(key));
+            _iteratorInstances[iterator_id_str]->iterator->Seek(to_std_string(key));
         }
     } @catch (NSException *exception) {
         NSLog(@"[LevelDB] iterator_seek failed: %@", exception.reason);
