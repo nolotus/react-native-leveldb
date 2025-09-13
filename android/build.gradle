@@ -74,7 +74,12 @@ def kotlin_version = getExtOrDefault("kotlinVersion")
 dependencies {
   implementation "com.facebook.react:react-android"
   implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
-  implementation 'com.github.iqbalhood:leveldb-android:1.22.0'
+  implementation('org.iq80.leveldb:leveldb:0.12') {
+      exclude group: 'com.google.guava', module: 'guava'
+  }
+
+  implementation 'org.iq80.leveldb:leveldb-api:0.12' // <-- 新增
+
 }
 
 react {
