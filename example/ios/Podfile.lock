@@ -8,7 +8,7 @@ PODS:
   - hermes-engine (0.79.2):
     - hermes-engine/Pre-built (= 0.79.2)
   - hermes-engine/Pre-built (0.79.2)
-  - Leveldb (0.1.0):
+  - Leveldb (0.1.1):
     - DoubleConversion
     - glog
     - hermes-engine
@@ -1916,7 +1916,7 @@ SPEC CHECKSUMS:
   fmt: a40bb5bd0294ea969aaaba240a927bd33d878cdd
   glog: 5683914934d5b6e4240e497e0f4a3b42d1854183
   hermes-engine: 314be5250afa5692b57b4dd1705959e1973a8ebe
-  Leveldb: b253549af1f2f38930141cd904e44dc6cb299b22
+  Leveldb: a00ef53a664bde06b410b0acc8d39758589fa522
   leveldb-library: cc8b8f8e013647a295ad3f8cd2ddf49a6f19be19
   RCT-Folly: 36fe2295e44b10d831836cc0d1daec5f8abcf809
   RCTDeprecation: 83ffb90c23ee5cea353bd32008a7bca100908f8c

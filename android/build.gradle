@@ -74,12 +74,14 @@ def kotlin_version = getExtOrDefault("kotlinVersion")
 dependencies {
   implementation "com.facebook.react:react-android"
   implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
-  implementation('org.iq80.leveldb:leveldb:0.12') {
-      exclude group: 'com.google.guava', module: 'guava'
-  }
-
-  implementation 'org.iq80.leveldb:leveldb-api:0.12' // <-- 新增
-
+  
+  // 1. 引入 leveldb 库，并移除原来的 exclude 配置
+  implementation 'org.iq80.leveldb:leveldb:0.12'
+  
+  // 2. 显式添加为 Android 优化的 Guava 库依赖，解决类找不到的问题
+  implementation 'com.google.guava:guava:32.1.2-android'
+  
+  // 'org.iq80.leveldb:leveldb-api' 是多余的，因为 leveldb 主库已包含它，所以可以安全删除
 }
 
 react {

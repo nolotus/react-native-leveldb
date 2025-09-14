@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   Clipboard,
 } from 'react-native';
-import Level from 'react-native-leveldb';
+import Level from '@nolotus/react-native-leveldb';
 import { useState, useEffect, useRef } from 'react';
 
 // Simple deep equal function for test verification
