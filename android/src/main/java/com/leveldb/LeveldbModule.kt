@@ -7,15 +7,18 @@ import org.iq80.leveldb.Options
 import org.iq80.leveldb.impl.Iq80DBFactory
 import java.io.File
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
+import org.iq80.leveldb.DBIterator
 import org.iq80.leveldb.WriteBatch
-import org.json.JSONArray
+import org.json.JSONArray // <-- 引入 JSONArray
+import org.json.JSONObject
 
 @ReactModule(name = LeveldbModule.NAME)
 class LeveldbModule(reactContext: ReactApplicationContext) :
   NativeLeveldbSpec(reactContext) {
 
-  private val dbInstances = mutableMapOf<String, DB>()
-  private val iteratorInstances = mutableMapOf<String, org.iq80.leveldb.DBIterator>()
+  private val dbInstances = ConcurrentHashMap<String, DB>()
+  private val iteratorInstances = ConcurrentHashMap<String, DBIterator>()
 
   override fun getName(): String {
     return NAME
@@ -105,23 +108,23 @@ class LeveldbModule(reactContext: ReactApplicationContext) :
         promise.reject("E_DB_NOT_OPEN", "Database not open")
         return
       }
-      val batch = db.createWriteBatch()
-      for (i in 0 until operations.size()) {
-        val op = operations.getMap(i)
-        if (op == null) continue
-        val type = op.getString("type")
-        val key = op.getString("key")?.toByteArray()
-        if (key == null) continue
+      
+      db.createWriteBatch().use { batch ->
+        for (i in 0 until operations.size()) {
+          val op = operations.getMap(i) ?: continue
+          val type = op.getString("type")
+          val key = op.getString("key")?.toByteArray() ?: continue
 
-        if (type == "put") {
-          val value = op.getString("value")?.toByteArray()
-          if (value != null) batch.put(key, value)
-        } else if (type == "del") {
-          batch.delete(key)
+          if (type == "put") {
+            val value = op.getString("value")?.toByteArray()
+            if (value != null) batch.put(key, value)
+          } else if (type == "del") {
+            batch.delete(key)
+          }
         }
+        db.write(batch)
       }
-      db.write(batch)
-      batch.close()
+
       promise.resolve(true)
     } catch (e: Exception) {
       promise.reject("E_LEVELDB_BATCH_FAILED", e)
@@ -136,7 +139,7 @@ class LeveldbModule(reactContext: ReactApplicationContext) :
         return
       }
       
-      val options = org.json.JSONObject(optionsJSON)
+      val options = JSONObject(optionsJSON)
       val iterator = db.iterator()
       val reverse = options.optBoolean("reverse", false)
 
@@ -145,7 +148,7 @@ class LeveldbModule(reactContext: ReactApplicationContext) :
         if (options.has("lt")) {
             val ltKey = options.getString("lt")
             iterator.seek(ltKey.toByteArray())
-            if (iterator.hasNext() && String(iterator.peekNext().key) >= ltKey) {
+            if (iterator.hasNext() && Arrays.equals(iterator.peekNext().key, ltKey.toByteArray())) {
                 iterator.prev()
             }
         }
@@ -157,7 +160,7 @@ class LeveldbModule(reactContext: ReactApplicationContext) :
         if (options.has("gt")) {
             val gtKey = options.getString("gt")
             iterator.seek(gtKey.toByteArray())
-            if (iterator.hasNext() && String(iterator.peekNext().key) == gtKey) {
+            if (iterator.hasNext() && Arrays.equals(iterator.peekNext().key, gtKey.toByteArray())) {
                 iterator.next()
             }
         }
@@ -171,6 +174,7 @@ class LeveldbModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  // **** FIX IS HERE ****
   override fun iterator_next(iteratorId: String, count: Double, promise: Promise) {
     try {
       val iterator = iteratorInstances[iteratorId]
@@ -178,6 +182,8 @@ class LeveldbModule(reactContext: ReactApplicationContext) :
         promise.reject("E_ITERATOR_NOT_FOUND", "Iterator not found")
         return
       }
+      
+      // Reverted to JSONArray and toString() to match the JS library's expectation
       val result = JSONArray()
       for (i in 0 until count.toInt()) {
         if (iterator.hasNext()) {
@@ -190,6 +196,7 @@ class LeveldbModule(reactContext: ReactApplicationContext) :
           break
         }
       }
+
       if (result.length() > 0) {
         promise.resolve(result.toString())
       } else {
@@ -202,10 +209,8 @@ class LeveldbModule(reactContext: ReactApplicationContext) :
 
   override fun iterator_seek(iteratorId: String, key: String) {
     try {
-      val iterator = iteratorInstances[iteratorId]
-      iterator?.seek(key.toByteArray())
+      iteratorInstances[iteratorId]?.seek(key.toByteArray())
     } catch (e: Exception) {
-      // Log error, but don't crash
       System.err.println("[LevelDB] iterator_seek failed: " + e.message)
     }
   }
@@ -223,11 +228,19 @@ class LeveldbModule(reactContext: ReactApplicationContext) :
   override fun onCatalystInstanceDestroy() {
     super.onCatalystInstanceDestroy()
     for (db in dbInstances.values) {
-      db.close()
+      try {
+        db.close()
+      } catch (e: Exception) {
+        System.err.println("[LevelDB] Failed to close DB on instance destroy: " + e.message)
+      }
     }
     dbInstances.clear()
     for (iterator in iteratorInstances.values) {
-      iterator.close()
+      try {
+        iterator.close()
+      } catch (e: Exception) {
+        System.err.println("[LevelDB] Failed to close iterator on instance destroy: " + e.message)
+      }
     }
     iteratorInstances.clear()
   }
