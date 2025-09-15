@@ -72,16 +72,20 @@ repositories {
 def kotlin_version = getExtOrDefault("kotlinVersion")
 
 dependencies {
+  // react-android 和 kotlin-stdlib 保持 implementation，因为它们是编译时依赖，
+  // 最终项目也会有自己的 react-android 依赖。
   implementation "com.facebook.react:react-android"
   implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
-  
-  // 1. 引入 leveldb 库，并移除原来的 exclude 配置
-  implementation 'org.iq80.leveldb:leveldb:0.12'
-  
-  // 2. 显式添加为 Android 优化的 Guava 库依赖，解决类找不到的问题
-  implementation 'com.google.guava:guava:32.1.2-android'
-  
-  // 'org.iq80.leveldb:leveldb-api' 是多余的，因为 leveldb 主库已包含它，所以可以安全删除
+
+  // ==================== [核心修改] ====================
+  //
+  // 将这两个依赖项从 implementation 修改为 api
+  // 这会把 leveldb 和 guava 库暴露给依赖你这个库的任何应用，
+  // 解决了主应用编译时找不到相关类（Unresolved reference）的问题。
+  //
+  // ===================================================
+  api 'org.iq80.leveldb:leveldb:0.12'
+  api 'com.google.guava:guava:32.1.2-android'
 }
 
 react {
